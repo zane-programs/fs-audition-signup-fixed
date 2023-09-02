@@ -1,0 +1,60 @@
+.datepicker-calendar * {
+  font-family: var(--chakra-fonts-body) !important;
+}
+
+.datepicker-calendar [aria-label="Go back 12 months"],
+.datepicker-calendar [aria-label="Go forward 12 months"] {
+  display: none;
+}
+
+.datepicker-calendar [aria-label="Go back 1 month"] {
+  margin-right: 0.8em;
+}
+.datepicker-calendar [aria-label="Go forward 1 month"] {
+  margin-left: 0.8em;
+}
+
+/* width */
+.scrollbarVisible::-webkit-scrollbar {
+  width: 8px;
+}
+
+/* Track */
+.scrollbarVisible::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Handle */
+.scrollbarVisible::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 99px;
+  min-height: 85px;
+}
+
+/* Handle on hover */
+.scrollbarVisible::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+/* Handle on hover */
+.scrollbarVisible::-webkit-scrollbar-thumb:active {
+  background: #777;
+}
+
+.scrollbarVisible::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@keyframes fadeOnce {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.fadeOnce {
+  animation: fadeOnce 375ms ease;
+}
+

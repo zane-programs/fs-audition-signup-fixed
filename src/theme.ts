@@ -21,6 +21,7 @@ const theme = extendTheme({
         fontWeight: "700",
       },
     },
+    // Button: { baseStyle: { fontFamily: "heading" } },
   },
 });
 

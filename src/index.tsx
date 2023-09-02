@@ -5,6 +5,8 @@ import { ChakraProvider, createLocalStorageManager } from "@chakra-ui/react";
 import theme from "./theme";
 import { BrowserRouter } from "react-router-dom";
 
+import "./index.css";
+
 const colorModeManager = createLocalStorageManager("fs-color-mode");
 
 const root = ReactDOM.createRoot(
