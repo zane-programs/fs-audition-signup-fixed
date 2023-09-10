@@ -8,7 +8,7 @@ import { useWindowDimensions } from "../../utils/hooks";
 import GlitchText from "./GlitchText";
 
 // media
-import tvVideo from "../../assets/media/TablingIntro_16_9.mp4";
+import tvVideo from "../../assets/media/Audition_Promo_TABLING_TV_v3.mp4";
 import tvStaticAudio from "../../assets/media/tv_static.mp3";
 
 // styles
@@ -118,7 +118,7 @@ export default function TV() {
             width: "100%",
             height: "100%",
             transform: shouldStretch
-              ? "scaleX(1.2) scaleY(0.953) translateX(-11px)"
+              ? "scaleX(1.2) scaleY(0.97) translate(-11px,-6px)"
               : undefined,
           }}
           onPlay={() => setVideoLoaded(true)}

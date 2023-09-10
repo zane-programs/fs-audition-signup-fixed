@@ -36,8 +36,9 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
+    "vercel:dev": "vercel dev",
     "start": "react-scripts start",
-    "build": "npm r puppeteer-extra-plugin-stealth && npm i puppeteer-extra-plugin-stealth && react-scripts build",
+    "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
@@ -61,5 +62,8 @@
   },
   "pkg": {
     "assets": "node_modules/puppeteer-extra-plugin-stealth/**/*.*"
+  },
+  "devDependencies": {
+    "vercel": "^32.1.0"
   }
 }
