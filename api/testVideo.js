@@ -1,5 +1,5 @@
 async function handleTestVideo(_req, res) {
-  res.status(500).send(`
+  res.status(200).send(`
     <!DOCTYPE html>
     <html lang="en">
     <head>
