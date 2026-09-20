@@ -18,29 +18,21 @@
     "date-fns-tz": "^2.0.0",
     "dayzed": "^3.2.3",
     "framer-motion": "^10.16.1",
-    "localforage": "^1.10.0",
-    "match-sorter": "^6.3.1",
-    "node-fetch": "^2.7.0",
-    "puppeteer": "^21.1.1",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-adblocker": "^2.13.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.45.4",
     "react-icons": "^4.10.1",
     "react-router-dom": "^6.15.0",
     "react-scripts": "5.0.1",
-    "sort-by": "^1.2.0",
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "vercel:dev": "vercel dev",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "vercel:dev": "vercel dev"
   },
   "eslintConfig": {
     "extends": [
@@ -60,10 +52,11 @@
       "last 1 safari version"
     ]
   },
-  "pkg": {
-    "assets": "node_modules/puppeteer-extra-plugin-stealth/**/*.*"
-  },
   "devDependencies": {
-    "vercel": "^32.1.0"
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "vercel": "^48.0.0"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

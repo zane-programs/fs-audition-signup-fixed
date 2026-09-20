@@ -29,9 +29,12 @@ import {
 import { useWindowDimensions } from "../../utils/hooks";
 import { parseDate } from "../../utils/date";
 import { format, startOfDay } from "date-fns";
-import { getSignUpInfo, reserveSlot } from "../../utils/sug";
-// import { getSignUpInfo, signUpForSlot } from "../../utils/sug";
-// import { getSignUpInfo, local_signUpInfo } from "../../utils/sug";
+import {
+  getSignUpInfo,
+  reserveSlot,
+  type SUGSignUpInfo,
+  type SUGSlot,
+} from "../../utils/sug";
 import type { IconType } from "react-icons";
 import {
   MdLocationPin,
@@ -42,8 +45,6 @@ import {
 import { useFormContext } from "react-hook-form";
 import BowtieIcon from "../../components/BowtieIcon";
 import { useNavigate } from "react-router";
-
-// import { subDays, addDays } from "date-fns";
 
 export interface Slot {
   id: number;
@@ -58,30 +59,53 @@ export interface Slot {
 }
 
 export default function SlotSelect() {
-  const [signUpInfo, setSignUpInfo] = useState<any | undefined>();
+  const [signUpInfo, setSignUpInfo] = useState<SUGSignUpInfo | undefined>();
   const [date, setDate] = useState<Date | undefined>();
+  const [loadError, setLoadError] = useState<string | undefined>();
 
-  useEffect(() => {
-    getSignUpInfo()
-      .then((signUpInfo) => {
-        setSignUpInfo(signUpInfo);
+  const loadSignUpInfo = useCallback(async () => {
+    setLoadError(undefined);
+    try {
+      const info = await getSignUpInfo();
+      setSignUpInfo(info);
 
-        // Auto-select first available date in calendar
-        // (Shows slots immediately rather than an awkward interstitial message)
-        setDate(
-          startOfDay(
-            parseDate(
-              signUpInfo.DATA.slotMetadata.calendarView.firstMonthWithSlots
+      // Auto-select first available date in calendar
+      // (Shows slots immediately rather than an awkward interstitial message)
+      setDate((current) =>
+        current !== undefined
+          ? current
+          : startOfDay(
+              parseDate(info.DATA.slotMetadata.calendarView.firstMonthWithSlots)
             )
-          )
-        );
-      })
-      .catch(console.error);
-    // setSignUpInfo(local_signUpInfo);
+      );
+    } catch (e) {
+      console.error(e);
+      setLoadError(
+        e instanceof Error ? e.message : "Could not load audition slots"
+      );
+    }
   }, []);
 
+  useEffect(() => {
+    loadSignUpInfo();
+  }, [loadSignUpInfo]);
+
+  if (loadError) {
+    return (
+      <FullPageMessage
+        title="Couldn't Load Slots"
+        description={`${loadError}\nPlease grab a Fleet Street member for help.`}
+      />
+    );
+  }
+
   return signUpInfo ? (
-    <SignUpView signUpInfo={signUpInfo} date={date} setDate={setDate} />
+    <SignUpView
+      signUpInfo={signUpInfo}
+      date={date}
+      setDate={setDate}
+      reloadSignUpInfo={loadSignUpInfo}
+    />
   ) : (
     <Loading />
   );
@@ -91,10 +115,12 @@ function SignUpView({
   signUpInfo,
   date,
   setDate,
+  reloadSignUpInfo,
 }: {
-  signUpInfo: any;
+  signUpInfo: SUGSignUpInfo;
   date: Date | undefined;
   setDate: React.Dispatch<React.SetStateAction<Date | undefined>>;
+  reloadSignUpInfo: () => Promise<void>;
 }) {
   const { height } = useWindowDimensions();
 
@@ -116,7 +142,7 @@ function SignUpView({
         setDate(date);
       }
     },
-    []
+    [setDate]
   );
 
   const slotsForDate: Slot[] = useMemo(() => {
@@ -126,18 +152,19 @@ function SignUpView({
 
     return Object.values(signUpInfo.DATA.slots)
       .filter(
-        (value) =>
-          startOfDay(parseDate((value as any).starttime)).getTime() ===
-            startTime && !(value as any).items[0]?.qtyTaken
+        (slot: SUGSlot) =>
+          startOfDay(parseDate(slot.starttime)).getTime() === startTime &&
+          !slot.items[0]?.qtyTaken
       )
-      .map((slot: any) => ({
+      .map((slot: SUGSlot) => ({
         id: slot.slotid,
         startTime: parseDate(slot.starttime),
         endTime: parseDate(slot.endtime),
         location: slot.location,
         isTaken: !!slot.items[0].qtyTaken,
         item: slot.items[0],
-      })) as Slot[];
+      }))
+      .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
   }, [date, signUpInfo.DATA.slots]);
 
   useEffect(() => {
@@ -177,9 +204,6 @@ function SignUpView({
                 )
               ),
             }}
-            // disabledDates={
-            //   new Set([startOfDay(new Date("September 6 2023")).getTime()])
-            // }
             configs={{
               dateFormat: "yyyy-MM-dd",
               monthNames: Month_Names_Short,
@@ -252,10 +276,6 @@ function SignUpView({
             />
           )
         ) : (
-          // <FullPageMessage
-          //   title="Select Date"
-          //   description="Please select a date from the calendar on the left."
-          // />
           <Flex justifyContent="center" alignItems="center" flex={1} h="100%">
             <Spinner size="xl" />
           </Flex>
@@ -266,6 +286,7 @@ function SignUpView({
         setIsOpen={setConfirmSlotDialogIsOpen}
         slot={slot}
         setSlot={setSlot}
+        reloadSignUpInfo={reloadSignUpInfo}
       />
     </>
   );
@@ -318,11 +339,13 @@ function ConfirmSlotDialog({
   setIsOpen,
   slot,
   setSlot,
+  reloadSignUpInfo,
 }: {
   isOpen: boolean;
   setIsOpen: React.Dispatch<React.SetStateAction<boolean>>;
   slot: Slot | undefined;
   setSlot: React.Dispatch<React.SetStateAction<Slot | undefined>>;
+  reloadSignUpInfo: () => Promise<void>;
 }) {
   const navigate = useNavigate();
   const { watch } = useFormContext();
@@ -332,10 +355,12 @@ function ConfirmSlotDialog({
   const formValues: { [k: string]: string } = watch();
 
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | undefined>();
 
   const onClose = useCallback(() => {
     // Clear slot on cancel
     setSlot(undefined);
+    setError(undefined);
     setIsOpen(false);
   }, [setSlot, setIsOpen]);
 
@@ -343,11 +368,12 @@ function ConfirmSlotDialog({
     // Slot must exist for this to work
     if (!slot) return;
 
-    const { firstName, lastName, pronouns, classYear, dormRoom, email } =
+    const { firstName, lastName, pronouns, classYear, dormRoom, email, phone } =
       formValues;
 
     // Show loading state
     setIsLoading(true);
+    setError(undefined);
 
     try {
       // Attempt signup
@@ -358,21 +384,28 @@ function ConfirmSlotDialog({
         classYear,
         dormRoom,
         email,
+        phone,
       });
 
       if (data.data === "success") {
         // Success => Thanks
         navigate("../thanks");
-      } else {
-        // No Success => Error message
-        alert(data?.error ?? "Unknown Error. Please try another slot");
+        return;
       }
+
+      setError(data.error ?? "Something went wrong. Please try another slot.");
+      // Someone may have taken the slot while this person was deciding, so
+      // pull fresh availability before they pick again.
+      await reloadSignUpInfo();
     } catch (e) {
       console.error(e);
+      setError(
+        e instanceof Error ? e.message : "Something went wrong. Please retry."
+      );
     } finally {
       setIsLoading(false);
     }
-  }, [formValues, navigate, slot]);
+  }, [formValues, navigate, reloadSignUpInfo, slot]);
 
   return (
     <AlertDialog
@@ -414,6 +447,11 @@ function ConfirmSlotDialog({
                   Once confirmed, you will receive a copy of this information in
                   the email you provided.
                 </Text>
+                {error && (
+                  <Text mt="4" fontSize="medium" fontWeight="600" color="red.300">
+                    {error}
+                  </Text>
+                )}
               </Box>
             )}
           </AlertDialogBody>

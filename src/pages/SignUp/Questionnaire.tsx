@@ -96,6 +96,14 @@ const QUESTIONS: Question[] = [
       return stanfordDomains.includes(stanfordCheck);
     },
   },
+  {
+    name: "phone",
+    title: "What is your phone number?",
+    inputType: "tel",
+    inputPlaceholder: "e.g. (650) 555-0123",
+    // SignUpGenius requires a phone number on this year's sheet.
+    isValid: (phone: string) => (phone ?? "").replace(/\D/g, "").length >= 10,
+  },
 ];
 
 export default function Questionnaire() {

@@ -1,123 +1,249 @@
-const { default: puppeteer } = require("puppeteer-extra");
-const { DEFAULT_INTERCEPT_RESOLUTION_PRIORITY } = require("puppeteer");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const {
+  sugApi,
+  getSignUpInfo,
+  sugMessage,
+  parseSugTime,
+} = require("../../../_lib/signupgenius");
 
-puppeteer.use(StealthPlugin());
+// Fields the kiosk questionnaire collects. All are required by the sheet.
+const REQUIRED_FIELDS = [
+  "firstName",
+  "lastName",
+  "pronouns",
+  "classYear",
+  "dormRoom",
+  "email",
+  "phone",
+];
 
-// Add adblocker plugin, which will transparently block ads in all pages you
-// create using puppeteer.
-const AdblockerPlugin = require("puppeteer-extra-plugin-adblocker");
-puppeteer.use(
-  AdblockerPlugin({
-    // Optionally enable Cooperative Mode for several request interceptors
-    interceptResolutionPriority: DEFAULT_INTERCEPT_RESOLUTION_PRIORITY,
-  })
-);
-
+/**
+ * Reserve one audition slot.
+ *
+ * POST /api/sug/:urlid/reserve/:slotId
+ *
+ * The client only sends the slot id and the person's answers; everything else
+ * (item ids, times, the sheet's custom-field ids) is read back from
+ * SignUpGenius at request time, so the sheet can be rebuilt each year without
+ * touching this file.
+ */
 async function handleReserve(req, res) {
-  // escape ids
-  const slotId = encodeURIComponent(req.query.id);
-  const urlId = encodeURIComponent(req.query.urlid);
-
-  // enforce presence of form fields
-  const { firstName, lastName, pronouns, classYear, dormRoom, email } =
-    req.body;
-  if (
-    !firstName ||
-    !lastName ||
-    !pronouns ||
-    !classYear ||
-    !dormRoom ||
-    !email
-  ) {
-    return res.status(400).send({ data: "error", error: "missing form field" });
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return fail(res, 405, "Method not allowed");
   }
 
-  const browser = await puppeteer.launch({ headless: true });
-  // const browser = await puppeteer.launch({ headless: false });
-  const page = await browser.newPage();
-  console.log("opened browser page");
+  const urlid = String(req.query.urlid || "");
+  const slotId = String(req.query.id || "");
 
-  // go to signup page based on urlid
-  await page.goto(`https://www.signupgenius.com/go/${urlId}#/`);
-  console.log("went to signup page");
-
-  // find element for time slot
-  const timeWrapSelector = await page.evaluate(
-    (slotId) => "#" + CSS.escape(slotId + "-time-wrap"),
-    slotId
-  );
-  console.log("timeWrapSelector", timeWrapSelector);
-
-  // wait for time wrap selector
-  await page.waitForSelector(timeWrapSelector, { visible: true });
-
-  // click button for this time slot
-  await page.evaluate((timeWrapSelector) => {
-    document
-      .querySelector(timeWrapSelector)
-      .nextElementSibling.querySelector("signup-button")
-      .classList.add("fs-signup-button");
-  }, timeWrapSelector);
-
-  await page.waitForSelector(".fs-signup-button button", { visible: true });
-
-  const isFull = await page.evaluate(() => {
-    return document
-      .querySelector(".fs-signup-button button")
-      .classList.contains("full");
-  });
-
-  if (isFull) {
-    return res.status(400).send({ data: "error", error: "slot is full" });
+  if (!urlid || !slotId) {
+    return fail(res, 400, "Missing sign-up id or slot id");
   }
 
-  await page.click(".fs-signup-button button");
-  console.log("clicked signup button");
-
-  // select time slot with .btn-signup-submit
-  await page.waitForSelector(".btn-signup-submit", { visible: true });
-  await page.click(".btn-signup-submit");
-  console.log("clicked signup submit button");
-
-  // wait for final signup button
-  await page.waitForSelector(`[name="btnSignUp"]`, { visible: true });
-
-  // TEXT FIELDS:
-  // Pronouns
-  await fillTextInput(page, `[aria-label="Pronouns"]`, pronouns);
-  // First Name
-  await fillTextInput(page, "#firstname", firstName);
-  // Last Name
-  await fillTextInput(page, "#lastname", lastName);
-  // Email
-  await fillTextInput(page, "#email", email);
-  // Dorm Room & School year
-  await fillTextInput(
-    page,
-    `[data-ng-if="customFields.length"] input`,
-    dormRoom + ", " + classYear
+  const body = req.body || {};
+  const missing = REQUIRED_FIELDS.filter(
+    (field) => !String(body[field] ?? "").trim()
   );
+  if (missing.length) {
+    return fail(res, 400, `Missing ${missing.join(", ")}`);
+  }
 
-  // click final signup button
-  await page.evaluate(() =>
-    document.querySelector(`[name="btnSignUp"]`).click()
-  );
+  const user = {};
+  for (const field of REQUIRED_FIELDS) user[field] = String(body[field]).trim();
 
-  // finalize sign up, waiting for thanks
-  await page.waitForSelector(".thank-you-wrapper", { visible: true });
+  try {
+    const info = await getSignUpInfo(urlid);
+    const data = info.DATA;
 
-  // close browser
-  await browser.close();
+    if (data.signuplocked || data.expired) {
+      return fail(res, 409, "This sign-up is closed");
+    }
 
-  res.status(200).send({ data: "success" });
+    const slot = data.slots[slotId];
+    if (!slot) {
+      return fail(res, 404, "That slot no longer exists. Please pick another.");
+    }
+
+    const item = slot.items?.[0];
+    if (!item) {
+      return fail(res, 409, "That slot has no audition available.");
+    }
+    if (item.qtyTaken) {
+      return fail(res, 409, "Someone just took that slot. Please pick another.");
+    }
+
+    const customFields = buildCustomFields(data.customfields, user);
+    if (customFields.error) {
+      return fail(res, 500, customFields.error);
+    }
+
+    const response = await sugApi(
+      "s.processSignUpFormHandler",
+      buildSignUpPayload({ urlid, data, slot, item, user, customFields: customFields.fields })
+    );
+
+    if (response?.SUCCESS === false) {
+      // SignUpGenius' own validation message is the most useful thing we can
+      // show the person standing at the kiosk.
+      return fail(res, 400, sugMessage(response) || "Sign-up was rejected");
+    }
+
+    // The availability we checked above comes from SignUpGenius' read endpoint,
+    // which can lag a minute or so behind a fresh sign-up — so two people can
+    // race onto the same slot and both be told it worked. Log the raw response
+    // so a disputed slot can be untangled from the function logs afterwards.
+    console.log(
+      "reserved",
+      JSON.stringify({ slotId, email: user.email, response })
+    );
+
+    return res.status(200).json({ data: "success" });
+  } catch (e) {
+    console.error("reserve failed", e);
+    return fail(res, 502, e?.message || "Could not reach SignUpGenius");
+  }
 }
 
-async function fillTextInput(page, selector, text) {
-  await page.waitForSelector(selector, { visible: true });
-  await page.focus(selector);
-  await page.keyboard.type(text);
-  console.log(`filled text input ${selector} with text: ${text}`);
+/**
+ * Fill in the sheet's custom fields from the questionnaire answers, matching
+ * on the field's type/name rather than a hard-coded id.
+ */
+function buildCustomFields(customfields, user) {
+  const fields = [];
+
+  for (const field of customfields || []) {
+    const type = String(field.fieldtype || "");
+    const name = String(field.fieldname || "");
+
+    let myvalue;
+    if (type === "Phone") {
+      myvalue = user.phone;
+    } else if (type === "PhoneType") {
+      myvalue = "Mobile";
+    } else if (/dorm/i.test(name)) {
+      myvalue = `${user.dormRoom}, ${user.classYear}`;
+    } else if (field.required) {
+      // Unknown required field: the sheet changed and the kiosk can't answer
+      // it. Say so loudly instead of submitting something half-blank.
+      return {
+        error: `The sign-up sheet now requires "${name}", which this app doesn't ask for.`,
+      };
+    } else {
+      myvalue = "";
+    }
+
+    fields.push({ ...field, myvalue });
+  }
+
+  return { fields };
+}
+
+function buildSignUpPayload({ urlid, data, slot, item, user, customFields }) {
+  const phoneField = customFields.find((f) => f.fieldtype === "Phone");
+
+  return {
+    urlid,
+    listid: data.id,
+    owner: data.owner,
+    title: data.header?.title || "",
+    siid: [String(item.slotitemid)],
+    rsvpid: 0,
+    imid: 0,
+    usealternatename: false,
+    changemembermame: false,
+    displayfirstname: user.firstName,
+    displaylastname: user.lastName,
+    firstname: user.firstName,
+    lastname: user.lastName,
+    email: user.email,
+    savecontactinfo: false,
+    type: "standard",
+    source: "main",
+    items: [
+      {
+        id: item.itemid,
+        itemid: item.itemid,
+        slotid: slot.slotid,
+        slotitemid: item.slotitemid,
+        listid: data.id,
+        item: item.item,
+        itemname: {},
+        itemorder: item.itemorder,
+        itemimage: "",
+        itemcomment: item.itemcomment || "",
+        comment: item.comment || "",
+        location: slot.location || "",
+        usetime: slot.usetime ?? 1,
+        starttime: slot.starttime,
+        endtime: slot.endtime,
+        dtstarttime: parseSugTime(slot.starttime),
+        dtendtime: parseSugTime(slot.endtime),
+        qty: 1,
+        myqty: 1,
+        availableqty: 1,
+        // The sheet's free-text comment column — "Pronouns" for us.
+        mycomment: user.pronouns,
+        mydonation: "",
+        price: 0,
+        discountprice: 0,
+        discounttype: "",
+        discountcriteria: "",
+        discountlabel: "",
+        discountisavailable: false,
+        optionpricelist: "",
+        optionnamelist: "",
+        paymenttype: "none",
+        paymentrequired: 0,
+        paymentAmount: 0,
+        paymentOptions: [],
+        paymentOptionSelected: {},
+        goalamount: 0,
+        minimumamount: 0,
+        displayraised: 0,
+        donotshow: 0,
+        priceError: false,
+        commentError: false,
+        slotError: false,
+        qtyError: false,
+      },
+    ],
+    member: {
+      memberid: 0,
+      parentid: 0,
+      zoneid: 0,
+      firstname: "",
+      lastname: "",
+      fullname: "",
+      email: "",
+      mobile: "",
+      currency: "USD",
+      productcode: "Basic",
+      paymentprovider: "",
+      ismemberpro: false,
+      istrialuser: false,
+      iseligiblefortrial: false,
+      haspayments: false,
+      hasmemberoptins: false,
+      loggedin: false,
+      membercontact: {
+        address1: "",
+        address2: "",
+        city: "",
+        state: "",
+        zipcode: "",
+        country: "",
+        comnpanyname: "",
+        phone: phoneField ? user.phone : "",
+        phonetype: phoneField ? "Mobile" : "",
+      },
+    },
+    isLoggedin: false,
+    customFields,
+    payLater: false,
+  };
+}
+
+function fail(res, status, error) {
+  return res.status(status).json({ data: "error", error });
 }
 
 module.exports = handleReserve;

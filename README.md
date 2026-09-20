@@ -1,46 +1,80 @@
-# Getting Started with Create React App
+# Fleet Street Audition Sign-Up
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A kiosk app for Fleet Street's audition tabling. Someone walks up to the laptop,
+answers a handful of questions, picks a slot, and is signed up on the group's
+[SignUpGenius](https://www.signupgenius.com/) sheet — without ever seeing
+SignUpGenius' own UI. A second route drives the promo video on the TV next to
+the table.
 
-## Available Scripts
+## Routes
 
-In the project directory, you can run:
+| Route     | What it is                                                        |
+| --------- | ----------------------------------------------------------------- |
+| `/signup` | The kiosk flow: welcome → questionnaire → slot select → thanks.   |
+| `/tv`     | Full-screen promo video for the TV. Double-click the logo on the welcome screen to go full screen; the TV page listens on a `BroadcastChannel` so the kiosk can flash the current person's name on screen. |
 
-### `npm start`
+## Updating for a new year
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+Create the new sign-up on SignUpGenius, then set `URL_ID` in
+[`src/utils/sug.ts`](src/utils/sug.ts) to the id from the sheet's URL:
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+```
+https://www.signupgenius.com/go/10C0E44A9AF2AABFEC52-65642443-fleet
+                                └──────────── URL_ID ────────────┘
+```
 
-### `npm test`
+That's the only value to change. Slot ids, item ids, times and the sheet's
+custom-field ids are all read back from SignUpGenius at request time.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+If the sheet gains a **new required custom field**, the kiosk can't invent an
+answer for it — a sign-up will fail with a message naming the field. Add a
+matching question to `QUESTIONS` in
+[`src/pages/SignUp/Questionnaire.tsx`](src/pages/SignUp/Questionnaire.tsx), add
+the field to `REQUIRED_FIELDS`, and map it in `buildCustomFields` in
+[`api/sug/[urlid]/reserve/[id].js`](api/sug/%5Burlid%5D/reserve/%5Bid%5D.js).
 
-### `npm run build`
+## How sign-ups actually happen
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+SignUpGenius has no public API, and the browser can't call their internal one
+directly (CORS). So two serverless functions sit in between:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+- **`POST /api/sug/:urlid/s.getSignUpInfo`** — proxies a read of the sheet.
+  Only that one action is allowed through; otherwise the endpoint would be an
+  open relay for any SignUpGenius action.
+- **`POST /api/sug/:urlid/reserve/:slotId`** — reads the sheet, finds the slot,
+  refuses it if it's already taken, builds the sign-up payload from live sheet
+  metadata, and posts it to SignUpGenius' `s.processSignUpFormHandler`.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Both go through [`api/_lib/signupgenius.js`](api/_lib/signupgenius.js).
 
-### `npm run eject`
+> Earlier versions drove a real headless browser (Puppeteer + stealth plugin)
+> through the SignUpGenius form. That can't run in a serverless function and
+> broke whenever SignUpGenius reshuffled their markup. The current version is
+> two plain HTTP calls.
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+## Running it
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```sh
+npm install
+npm run vercel:dev   # serves the app AND the /api functions on :3000
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+`npm start` runs the React dev server alone, which is fine for styling but
+leaves `/api/*` returning 404, so slot loading and sign-up won't work. Use
+`npm run vercel:dev` for anything that touches the sheet.
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+(The script is *not* called `dev`: Vercel's Create React App preset runs
+`npm run dev` as its development command, so naming it that makes `vercel dev`
+invoke itself.)
 
-## Learn More
+## Deploying
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+Pushing to `master` deploys to Vercel. [`vercel.json`](vercel.json) pins the
+build and rewrites non-`/api` paths to `index.html` so client-side routes
+survive a refresh.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+To check a build the way Vercel will run it:
+
+```sh
+npx vercel build --prod
+```
