@@ -8,7 +8,7 @@ import { useWindowDimensions } from "../../utils/hooks";
 import GlitchText from "./GlitchText";
 
 // media
-import tvVideo from "../../assets/media/Audition_Promo_TABLING_TV_v3.mp4";
+import tvVideo from "../../assets/media/Audition_Promo_TABLING_TV_v4_shitty.mp4";
 import tvStaticAudio from "../../assets/media/tv_static.mp3";
 
 // styles
