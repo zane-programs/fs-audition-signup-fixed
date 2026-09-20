@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Box } from "@chakra-ui/react";
+import { Box, type BoxProps } from "@chakra-ui/react";
 import bowtie_icon from "../assets/media/bowtie_icon.webp";
 
-export default function BowtieIcon() {
+export default function BowtieIcon(props: BoxProps) {
   const [loaded, setLoaded] = useState(false);
   return (
     <Box
@@ -14,6 +14,7 @@ export default function BowtieIcon() {
       opacity={loaded ? 1 : 0}
       transition="opacity 375ms ease"
       onDragStart={(e) => e.preventDefault()}
+      {...props}
     >
       <img
         style={{ width: "100%" }}

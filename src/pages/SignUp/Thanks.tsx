@@ -2,10 +2,13 @@ import { Flex, Heading, Text } from "@chakra-ui/react";
 import { useWindowDimensions } from "../../utils/hooks";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { format } from "date-fns";
+import { useSignUp } from ".";
 
 export default function Thanks() {
   const navigate = useNavigate();
   const { width, height } = useWindowDimensions();
+  const { slot } = useSignUp();
 
   const navigationTimeoutRef = useRef<NodeJS.Timeout>();
 
@@ -40,11 +43,17 @@ export default function Thanks() {
         transition="opacity 370ms linear"
         direction="column"
         w="100%"
-        maxWidth="650"
+        maxWidth="760"
         gap="4"
         textAlign="center"
       >
         <Heading fontSize="8xl">Thank You!</Heading>
+        {slot && (
+          <Text fontSize="3xl" fontWeight="700">
+            See you {format(slot.startTime, "EEEE")} at{" "}
+            {format(slot.startTime, "h:mm aa")}.
+          </Text>
+        )}
         <Text fontSize="xl">
           Please check your email for an audition confirmation.
         </Text>

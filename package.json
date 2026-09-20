@@ -13,6 +13,7 @@
     "@types/node": "^16.18.43",
     "@types/react": "^18.2.21",
     "@types/react-dom": "^18.2.7",
+    "@types/three": "^0.160.0",
     "chakra-dayzed-datepicker": "^0.2.9",
     "date-fns": "^2.30.0",
     "date-fns-tz": "^2.0.0",
@@ -24,6 +25,7 @@
     "react-icons": "^4.10.1",
     "react-router-dom": "^6.15.0",
     "react-scripts": "5.0.1",
+    "three": "^0.160.1",
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"
   },
@@ -32,7 +34,8 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "vercel:dev": "vercel dev"
+    "vercel:dev": "vercel dev",
+    "test:api": "node test/reserve-race.test.js"
   },
   "eslintConfig": {
     "extends": [

@@ -15,12 +15,22 @@ import {
  * this parses it and rebuilds it out of React elements: anything not on the
  * list below is dropped, and no attribute other than a vetted `href` is ever
  * read. Styling comes from the theme, not from the scraped markup.
+ *
+ * The words themselves are never touched: whatever Fleet Street's admins
+ * write on the sheet is what shows up here, set in type that can be read at
+ * arm's length in the dark.
  */
+
+const BLOCK_STYLE = {
+  fontSize: "17px",
+  lineHeight: "1.7",
+  color: "#ffffffeb",
+};
 
 // Inline tags we keep, and the styling each one earns.
 const INLINE_STYLES: { [tagName: string]: object } = {
-  STRONG: { fontWeight: "700" },
-  B: { fontWeight: "700" },
+  STRONG: { fontWeight: "700", color: "#fff" },
+  B: { fontWeight: "700", color: "#fff" },
   EM: { fontStyle: "italic" },
   I: { fontStyle: "italic" },
   U: { textDecoration: "underline" },
@@ -83,19 +93,19 @@ function renderNode(node: Node, index: number): React.ReactNode {
     case "P":
     case "DIV":
       return (
-        <Text key={index} fontSize="sm" color="#fffd">
+        <Text key={index} {...BLOCK_STYLE}>
           {children}
         </Text>
       );
     case "UL":
       return (
-        <UnorderedList key={index} fontSize="sm" color="#fffd" pl="2">
+        <UnorderedList key={index} {...BLOCK_STYLE} pl="2" spacing="1.5">
           {children}
         </UnorderedList>
       );
     case "OL":
       return (
-        <OrderedList key={index} fontSize="sm" color="#fffd" pl="2">
+        <OrderedList key={index} {...BLOCK_STYLE} pl="2" spacing="1.5">
           {children}
         </OrderedList>
       );

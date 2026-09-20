@@ -1,29 +1,42 @@
-import { Button, Flex } from "@chakra-ui/react";
+import { Box, Button, Flex, Heading } from "@chakra-ui/react";
 import FSLogo from "../../components/FSLogo";
 import { useWindowDimensions } from "../../utils/hooks";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useFormContext } from "react-hook-form";
+import { useSignUp } from ".";
+
+// three.js is only needed here, so keep it out of the main bundle.
+const AttractCanvas = lazy(() => import("./attract/AttractCanvas"));
+
+function goFullscreen() {
+  document.documentElement.requestFullscreen({ navigationUI: "hide" });
+}
 
 export default function Welcome() {
   const navigate = useNavigate();
   const { width, height } = useWindowDimensions();
   const { reset } = useFormContext();
+  const { setSlot } = useSignUp();
 
   const [pageHidden, setPageHidden] = useState(true);
+  const [useFallback, setUseFallback] = useState(
+    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  );
 
   const navigationTimeoutRef = useRef<NodeJS.Timeout>();
 
   const handleStart = useCallback(() => {
     setPageHidden(true);
     navigationTimeoutRef.current = setTimeout(() => {
-      navigate("../questionnaire");
+      navigate("../slotSelect");
     }, 300);
   }, [navigate]);
 
   useEffect(() => {
-    // Reset form values
+    // Reset the last person's answers
     reset();
+    setSlot(undefined);
 
     // Show page on render
     setPageHidden(false);
@@ -31,26 +44,50 @@ export default function Welcome() {
     return () => {
       clearTimeout(navigationTimeoutRef.current);
     };
-  }, [reset]);
+  }, [reset, setSlot]);
+
+  const fallback = (
+    <StaticWelcome onStart={handleStart} />
+  );
 
   return (
-    <Flex
-      justifyContent="center"
-      alignItems="center"
-      transform={pageHidden ? "scale(0)" : "scale(1)"}
+    <Box
+      position="relative"
       opacity={pageHidden ? 0 : 1}
       pointerEvents={pageHidden ? "none" : undefined}
-      transition="all 235ms ease-in-out"
+      transition="opacity 280ms ease-in-out"
       style={{ width, height }}
+      onDoubleClick={goFullscreen}
     >
-      <Flex direction="column" w="100%" maxWidth="650" gap="4">
-        <FSLogo
-          onDoubleClick={() => {
-            document.documentElement.requestFullscreen({
-              navigationUI: "hide",
-            });
-          }}
-        />
+      {useFallback ? (
+        fallback
+      ) : (
+        <Suspense fallback={null}>
+          <AttractCanvas
+            onStart={handleStart}
+            onUnsupported={() => setUseFallback(true)}
+          />
+        </Suspense>
+      )}
+    </Box>
+  );
+}
+
+/** Shown when WebGL isn't available, or the visitor asks for less motion. */
+function StaticWelcome({ onStart }: { onStart: () => void }) {
+  return (
+    <Flex h="100%" justifyContent="center" alignItems="center">
+      <Flex direction="column" w="100%" maxWidth="650" gap="4" px="6">
+        <Heading
+          as="h1"
+          fontSize="3xl"
+          fontWeight="900"
+          letterSpacing="0.2em"
+          textAlign="center"
+        >
+          AUDITION FOR
+        </Heading>
+        <FSLogo />
         <Button
           type="button"
           size="lg"
@@ -58,14 +95,16 @@ export default function Welcome() {
           py="8"
           px="12"
           fontFamily="heading"
-          fontWeight="700"
+          fontWeight="900"
+          letterSpacing="0.2em"
           color="#fff"
           backgroundColor="red.600"
           _hover={{ backgroundColor: "red.500" }}
           _active={{ backgroundColor: "red.700" }}
-          onClick={handleStart}
+          onClick={onStart}
+          onDoubleClick={(e) => e.stopPropagation()}
         >
-          Start
+          START
         </Button>
       </Flex>
     </Flex>

@@ -59,6 +59,31 @@ export async function getSignUpInfo(): Promise<SUGSignUpInfo> {
   });
 }
 
+export interface Availability {
+  /** Slot ids that are full. */
+  taken: string[];
+  /** True once the whole sign-up is locked or past its close date. */
+  closed: boolean;
+}
+
+/**
+ * Cheap poll of which slots are full, so the picker can drop slots as they
+ * fill while someone is deciding. A few hundred bytes, versus ~70KB for the
+ * whole sheet.
+ */
+export async function getAvailability(): Promise<Availability> {
+  const res = await fetch(
+    "/api/sug/" + encodeURIComponent(URL_ID) + "/availability",
+    { headers: { accept: "application/json" } }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Availability check failed (HTTP ${res.status})`);
+  }
+
+  return (await res.json()) as Availability;
+}
+
 export interface ReserveResult {
   data: "success" | "error";
   error?: string;

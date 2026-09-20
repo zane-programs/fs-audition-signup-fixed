@@ -1,7 +1,7 @@
 # Fleet Street Audition Sign-Up
 
 A kiosk app for Fleet Street's audition tabling. Someone walks up to the laptop,
-answers a handful of questions, picks a slot, and is signed up on the group's
+picks a slot, answers a handful of questions, and is signed up on the group's
 [SignUpGenius](https://www.signupgenius.com/) sheet — without ever seeing
 SignUpGenius' own UI. A second route drives the promo video on the TV next to
 the table.
@@ -10,8 +10,8 @@ the table.
 
 | Route     | What it is                                                        |
 | --------- | ----------------------------------------------------------------- |
-| `/signup` | The kiosk flow: welcome → questionnaire → slot select → thanks.   |
-| `/tv`     | Full-screen promo video for the TV. Double-click the logo on the welcome screen to go full screen; the TV page listens on a `BroadcastChannel` so the kiosk can flash the current person's name on screen. |
+| `/signup` | The kiosk flow: welcome → slot select → details → thanks.   |
+| `/tv`     | Full-screen promo video for the TV. Double-click the welcome screen to go full screen; the TV page listens on a `BroadcastChannel` so the kiosk can flash the current person's name on screen. |
 
 ## Updating for a new year
 
@@ -28,8 +28,8 @@ custom-field ids are all read back from SignUpGenius at request time.
 
 If the sheet gains a **new required custom field**, the kiosk can't invent an
 answer for it — a sign-up will fail with a message naming the field. Add a
-matching question to `QUESTIONS` in
-[`src/pages/SignUp/Questionnaire.tsx`](src/pages/SignUp/Questionnaire.tsx), add
+matching field to `STEPS` in
+[`src/pages/SignUp/Details.tsx`](src/pages/SignUp/Details.tsx), add
 the field to `REQUIRED_FIELDS`, and map it in `buildCustomFields` in
 [`api/sug/[urlid]/reserve/[id].js`](api/sug/%5Burlid%5D/reserve/%5Bid%5D.js).
 

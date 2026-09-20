@@ -1,84 +1,42 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarPanel,
   Weekday_Names_Short,
   Month_Names_Short,
 } from "chakra-dayzed-datepicker";
-import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
-  Box,
-  Button,
-  Flex,
-  Heading,
-  Icon,
-  Spinner,
-  Text,
-} from "@chakra-ui/react";
-import { useWindowDimensions } from "../../utils/hooks";
+import { Box, Flex, Heading, Spinner, Text } from "@chakra-ui/react";
+import { useTakenSlotIds, useWindowDimensions } from "../../utils/hooks";
 import { parseDate } from "../../utils/date";
-import { format, startOfDay } from "date-fns";
+import { addDays, differenceInMinutes, format, startOfDay } from "date-fns";
 import {
   getSignUpInfo,
-  reserveSlot,
   type SUGSignUpInfo,
   type SUGSlot,
 } from "../../utils/sug";
-import type { IconType } from "react-icons";
-import {
-  MdLocationPin,
-  MdCalendarMonth,
-  MdTimer,
-  MdEmail,
-} from "react-icons/md";
-import { useFormContext } from "react-hook-form";
 import BowtieIcon from "../../components/BowtieIcon";
 import RichText from "../../components/RichText";
 import { useNavigate } from "react-router";
+import { type Slot, useSignUp } from ".";
 
-export interface Slot {
-  id: number;
-  startTime: Date;
-  endTime: Date;
-  location: string;
-  isTaken: boolean;
-  item: {
-    itemid: number;
-    slotitemid: number;
-  };
-}
+// Secondary text. Still 12:1 against black: this runs outdoors, after dark.
+const QUIET = "#ffffffc7";
+const HAIRLINE = "#ffffff38";
 
 export default function SlotSelect() {
+  const { slot } = useSignUp();
+
   const [signUpInfo, setSignUpInfo] = useState<SUGSignUpInfo | undefined>();
-  const [date, setDate] = useState<Date | undefined>();
+  // Coming back to change a time lands on the day that was picked before.
+  const [date, setDate] = useState<Date | undefined>(() =>
+    slot ? startOfDay(slot.startTime) : undefined
+  );
   const [loadError, setLoadError] = useState<string | undefined>();
+  const takenSlotIds = useTakenSlotIds();
 
   const loadSignUpInfo = useCallback(async () => {
     setLoadError(undefined);
     try {
-      const info = await getSignUpInfo();
-      setSignUpInfo(info);
-
-      // Auto-select first available date in calendar
-      // (Shows slots immediately rather than an awkward interstitial message)
-      setDate((current) =>
-        current !== undefined
-          ? current
-          : startOfDay(
-              parseDate(info.DATA.slotMetadata.calendarView.firstMonthWithSlots)
-            )
-      );
+      setSignUpInfo(await getSignUpInfo());
     } catch (e) {
       console.error(e);
       setLoadError(
@@ -105,110 +63,243 @@ export default function SlotSelect() {
       signUpInfo={signUpInfo}
       date={date}
       setDate={setDate}
-      reloadSignUpInfo={loadSignUpInfo}
+      takenSlotIds={takenSlotIds}
     />
   ) : (
     <Loading />
   );
 }
 
+interface Day {
+  date: Date;
+  slots: Slot[];
+}
+
 function SignUpView({
   signUpInfo,
   date,
   setDate,
-  reloadSignUpInfo,
+  takenSlotIds,
 }: {
   signUpInfo: SUGSignUpInfo;
   date: Date | undefined;
   setDate: React.Dispatch<React.SetStateAction<Date | undefined>>;
-  reloadSignUpInfo: () => Promise<void>;
+  takenSlotIds: Set<string>;
 }) {
   const { height } = useWindowDimensions();
+  const navigate = useNavigate();
+  const { slot: chosenSlot, setSlot } = useSignUp();
 
-  const [slot, setSlot] = useState<Slot | undefined>();
+  // Every day on the sheet, with the slots still open on it.
+  const days: Day[] = useMemo(() => {
+    const byDay = new Map<number, Day>();
 
-  const [confirmSlotDialogIsOpen, setConfirmSlotDialogIsOpen] = useState(false);
+    Object.values(signUpInfo.DATA.slots).forEach((slot: SUGSlot) => {
+      const startTime = parseDate(slot.starttime);
+      const dayStart = startOfDay(startTime);
+      const day = byDay.get(dayStart.getTime()) ?? { date: dayStart, slots: [] };
+      byDay.set(dayStart.getTime(), day);
+
+      if (slot.items[0]?.qtyTaken || takenSlotIds.has(String(slot.slotid)))
+        return;
+
+      day.slots.push({
+        id: slot.slotid,
+        startTime,
+        endTime: parseDate(slot.endtime),
+        location: slot.location,
+        isTaken: false,
+        item: slot.items[0],
+      });
+    });
+
+    return Array.from(byDay.values())
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .map((day) => ({
+        ...day,
+        slots: day.slots.sort(
+          (a, b) => a.startTime.getTime() - b.startTime.getTime()
+        ),
+      }));
+  }, [signUpInfo.DATA.slots, takenSlotIds]);
+
+  // Open on the first day that still has room
+  // (Shows slots immediately rather than an awkward interstitial message)
+  useEffect(() => {
+    if (date || days.length === 0) return;
+    setDate((days.find((day) => day.slots.length > 0) ?? days[0]).date);
+  }, [date, days, setDate]);
+
+  const selectedDay = useMemo(
+    () => days.find((day) => day.date.getTime() === date?.getTime()),
+    [days, date]
+  );
+
+  // Only days that are actually on the sheet can be picked in the calendar.
+  const disabledDates = useMemo(() => {
+    const disabled = new Set<number>();
+    if (days.length === 0) return disabled;
+    const onSheet = new Set(days.map((day) => day.date.getTime()));
+    const last = days[days.length - 1].date;
+    for (let d = days[0].date; d <= last; d = addDays(d, 1)) {
+      if (!onSheet.has(d.getTime())) disabled.add(d.getTime());
+    }
+    return disabled;
+  }, [days]);
+
+  // Say the venue and length once up top when every slot agrees on them,
+  // rather than repeating them on every button.
+  const allSlots = useMemo(() => days.flatMap((day) => day.slots), [days]);
+  const sharedLocation = useMemo(() => {
+    const locations = new Set(allSlots.map((s) => s.location));
+    return locations.size === 1 ? allSlots[0].location : undefined;
+  }, [allSlots]);
+  const sharedMinutes = useMemo(() => {
+    const lengths = new Set(
+      allSlots.map((s) => differenceInMinutes(s.endTime, s.startTime))
+    );
+    return lengths.size === 1 ? Array.from(lengths)[0] : undefined;
+  }, [allSlots]);
 
   const handleOnDateSelected = useCallback(
-    (props: {
-      date: Date;
-      nextMonth: boolean;
-      prevMonth: boolean;
-      selectable: boolean;
-      selected: boolean;
-      today: boolean;
-    }) => {
-      const { date } = props;
+    ({ date }: { date: Date }) => {
       if (date instanceof Date && !isNaN(date.getTime())) {
-        setDate(date);
+        setDate(startOfDay(date));
       }
     },
     [setDate]
   );
 
-  const slotsForDate: Slot[] = useMemo(() => {
-    if (!date) return [];
-
-    const startTime = startOfDay(date).getTime();
-
-    return Object.values(signUpInfo.DATA.slots)
-      .filter(
-        (slot: SUGSlot) =>
-          startOfDay(parseDate(slot.starttime)).getTime() === startTime &&
-          !slot.items[0]?.qtyTaken
-      )
-      .map((slot: SUGSlot) => ({
-        id: slot.slotid,
-        startTime: parseDate(slot.starttime),
-        endTime: parseDate(slot.endtime),
-        location: slot.location,
-        isTaken: !!slot.items[0].qtyTaken,
-        item: slot.items[0],
-      }))
-      .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
-  }, [date, signUpInfo.DATA.slots]);
-
-  useEffect(() => {
-    // Confirm slot on select
-    slot && setConfirmSlotDialogIsOpen(true);
-  }, [slot]);
+  const handleSlotSelected = useCallback(
+    (slot: Slot) => {
+      setSlot(slot);
+      navigate("../details");
+    },
+    [navigate, setSlot]
+  );
 
   return (
-    <>
-      <Flex style={{ height }} className="fadeOnce">
-        <Flex
-          direction="column"
-          h="100%"
-          w="400px"
-          flexShrink={0}
-          background="#fff2"
-          px="8"
-          pt="28"
-          pb="8"
-          gap="4"
-          position="relative"
-          overflowY="auto"
-          className="scrollbarVisible"
-        >
-          <BowtieIcon />
-          <Heading fontSize="x-large" textAlign="center">
-            Audition Dates
-          </Heading>
+    <Flex style={{ height }} className="fadeOnce">
+      <Flex direction="column" flex={1} minW={0} h="100%" px="12" pt="9">
+        <Flex as="header" alignItems="center" gap="5" mb="7">
+          <BowtieIcon position="static" transform="none" w="84px" flexShrink={0} />
+          <Box>
+            <Heading as="h1" fontSize="40px" lineHeight="1.15">
+              Pick your audition time
+            </Heading>
+            {(sharedLocation || sharedMinutes) && (
+              <Text fontSize="xl" color={QUIET} mt="1.5">
+                {sharedMinutes && `Each audition is ${sharedMinutes} minutes`}
+                {sharedMinutes && sharedLocation && ", "}
+                {sharedLocation &&
+                  `${sharedMinutes ? "at" : "Auditions are at"} ${sharedLocation}`}
+                .
+              </Text>
+            )}
+          </Box>
+        </Flex>
+
+        <Flex role="tablist" aria-label="Audition days" gap="3" overflowX="auto" flexShrink={0} p="1" m="-1">
+          {days.map((day) => (
+            <DayTab
+              key={day.date.getTime()}
+              day={day}
+              isSelected={day === selectedDay}
+              onSelect={() => setDate(day.date)}
+            />
+          ))}
+        </Flex>
+
+        {selectedDay ? (
+          selectedDay.slots.length > 0 ? (
+            <Flex
+              key={selectedDay.date.getTime()}
+              className="fadeOnce scrollbarVisible"
+              role="tabpanel"
+              direction="column"
+              flex={1}
+              minH={0}
+              overflowY="auto"
+              mt="6"
+              pb="10"
+              pr="4"
+            >
+              {groupByHour(selectedDay.slots).map(([hour, slots]) => (
+                <Flex
+                  key={hour}
+                  gap="6"
+                  py="4"
+                  borderTop={`1px solid ${HAIRLINE}`}
+                  alignItems="flex-start"
+                >
+                  <Heading
+                    as="h2"
+                    fontSize="2xl"
+                    w="92px"
+                    flexShrink={0}
+                    // Sits on the first row of buttons' centre line
+                    lineHeight="64px"
+                    color={QUIET}
+                  >
+                    {hour}
+                  </Heading>
+                  <Flex wrap="wrap" gap="3">
+                    {slots.map((slot) => (
+                      <SlotButton
+                        key={slot.id}
+                        slot={slot}
+                        showLocation={!sharedLocation}
+                        isChosen={slot.id === chosenSlot?.id}
+                        onSelect={handleSlotSelected}
+                      />
+                    ))}
+                  </Flex>
+                </Flex>
+              ))}
+            </Flex>
+          ) : (
+            <FullPageMessage
+              title="This day is full"
+              description="Every audition on this day has been taken. Try another day above."
+            />
+          )
+        ) : date ? (
+          <FullPageMessage
+            title="No auditions this day"
+            description="Pick one of the days above."
+          />
+        ) : (
+          <Flex justifyContent="center" alignItems="center" flex={1}>
+            <Spinner size="xl" />
+          </Flex>
+        )}
+      </Flex>
+
+      <Flex
+        as="aside"
+        direction="column"
+        h="100%"
+        w="460px"
+        flexShrink={0}
+        background="#161616"
+        borderLeft={`1px solid ${HAIRLINE}`}
+        px="9"
+        py="9"
+        gap="8"
+        overflowY="auto"
+        className="scrollbarVisible"
+      >
+        {days.length > 0 && (
           <CalendarPanel
+            disabledDates={disabledDates}
             dayzedHookProps={{
               showOutsideDays: true,
               onDateSelected: handleOnDateSelected,
               selected: date,
-              minDate: startOfDay(
-                parseDate(
-                  signUpInfo.DATA.slotMetadata.calendarView.firstMonthWithSlots
-                )
-              ),
-              maxDate: startOfDay(
-                parseDate(
-                  signUpInfo.DATA.slotMetadata.calendarView.lastMonthWithSlots
-                )
-              ),
+              // Re-anchor the visible month when a tab changes the day
+              date,
+              minDate: days[0].date,
+              maxDate: days[days.length - 1].date,
             }}
             configs={{
               dateFormat: "yyyy-MM-dd",
@@ -217,8 +308,14 @@ function SignUpView({
               firstDayOfWeek: 0,
             }}
             propsConfigs={{
+              dateHeadingProps: { fontSize: "xl", fontWeight: "700" },
+              weekdayLabelProps: { color: QUIET, fontSize: "sm" },
               dayOfMonthBtnProps: {
                 defaultBtnProps: {
+                  fontSize: "lg",
+                  fontWeight: "700",
+                  color: "#fff",
+                  h: "44px",
                   _hover: {
                     background: "red.400",
                   },
@@ -228,6 +325,9 @@ function SignUpView({
                   sx: {
                     "&:disabled": {
                       background: "transparent !important",
+                      color: "#ffffff59",
+                      fontWeight: "400",
+                      opacity: 1,
                     },
                   },
                 },
@@ -237,275 +337,121 @@ function SignUpView({
               },
             }}
           />
-          {signUpInfo.DATA.header?.description && (
-            <Flex direction="column" gap="3" mt="2" pt="6" borderTop="1px solid #fff3">
-              <Heading fontSize="lg" textAlign="center">
-                What to Expect
-              </Heading>
-              <RichText html={signUpInfo.DATA.header.description} />
-            </Flex>
-          )}
-        </Flex>
-        {date ? (
-          slotsForDate.length > 0 ? (
-            <Flex
-              key={date.getTime()}
-              className="fadeOnce"
-              direction="column"
-              flex={1}
-              p="8"
-              height="100%"
-              overflow="hidden"
-              gap="6"
-            >
-              <Heading size="lg" as="h1" px="1">
-                {format(date, "EEEE, MMMM d")}
-              </Heading>
-              <Flex
-                w="100%"
-                flex={1}
-                overflow="scroll"
-                className="scrollbarVisible"
-                p="1"
-                pr="3"
-                gap="3"
-                direction="column"
-              >
-                {slotsForDate.map((currentSlot) => (
-                  <SlotButton
-                    key={currentSlot.id}
-                    currentSlot={currentSlot}
-                    selectedSlot={slot}
-                    setSelectedSlot={setSlot}
-                  />
-                ))}
-              </Flex>
-            </Flex>
-          ) : (
-            <FullPageMessage
-              title="No Slots Available"
-              description={
-                "There are no slots available for the selected date.\nPlease select another date from the calendar on the left."
-              }
-            />
-          )
-        ) : (
-          <Flex justifyContent="center" alignItems="center" flex={1} h="100%">
-            <Spinner size="xl" />
+        )}
+        {signUpInfo.DATA.header?.description && (
+          <Flex direction="column" gap="4">
+            <Heading as="h2" fontSize="28px">
+              What to expect
+            </Heading>
+            <RichText html={signUpInfo.DATA.header.description} />
           </Flex>
         )}
       </Flex>
-      <ConfirmSlotDialog
-        isOpen={confirmSlotDialogIsOpen}
-        setIsOpen={setConfirmSlotDialogIsOpen}
-        slot={slot}
-        setSlot={setSlot}
-        reloadSignUpInfo={reloadSignUpInfo}
-      />
-    </>
+    </Flex>
   );
 }
 
-function SlotButton({
-  currentSlot,
-  selectedSlot,
-  setSelectedSlot,
+function groupByHour(slots: Slot[]): [string, Slot[]][] {
+  const groups = new Map<string, Slot[]>();
+  slots.forEach((slot) => {
+    const hour = format(slot.startTime, "h aa");
+    groups.set(hour, [...(groups.get(hour) ?? []), slot]);
+  });
+  return Array.from(groups.entries());
+}
+
+function DayTab({
+  day,
+  isSelected,
+  onSelect,
 }: {
-  currentSlot: Slot;
-  selectedSlot: Slot | undefined;
-  setSelectedSlot: React.Dispatch<React.SetStateAction<Slot | undefined>>;
+  day: Day;
+  isSelected: boolean;
+  onSelect: () => void;
 }) {
+  const open = day.slots.length;
+
   return (
     <Box
-      fontFamily="body"
       as="button"
       type="button"
+      role="tab"
+      aria-selected={isSelected}
+      onClick={onSelect}
       textAlign="left"
-      w="100%"
-      backgroundColor={currentSlot.id === selectedSlot?.id ? "#fff3" : "#fff0"}
-      onClick={() => setSelectedSlot(currentSlot)}
-      border="1px solid #fff3"
-      borderRadius="lg"
-      padding="3"
+      flexShrink={0}
+      minW="220px"
+      px="5"
+      py="3.5"
+      borderRadius="xl"
+      border="2px solid"
+      borderColor={isSelected ? "red.600" : HAIRLINE}
+      backgroundColor={isSelected ? "red.600" : "transparent"}
       outline="none"
       transitionProperty="var(--chakra-transition-property-common)"
       transitionDuration="var(--chakra-transition-duration-normal)"
-      _focusVisible={{
-        outline: "none",
-        boxShadow: "var(--chakra-shadows-outline)",
-      }}
+      _hover={isSelected ? undefined : { borderColor: "#fff" }}
+      _focusVisible={{ boxShadow: "0 0 0 3px #fff" }}
     >
-      <Heading size="md" as="h3" fontFamily="body" mb="1.5">
-        {format(currentSlot.startTime, "h:mm aa")}
+      <Heading as="span" display="block" fontSize="26px" lineHeight="1.2">
+        {format(day.date, "EEEE")}
       </Heading>
-      <Text fontSize="md" color="#fffb">
-        {/* Not every slot has a location set on the sheet. */}
-        {currentSlot.location && (
-          <>
-            {currentSlot.location}
-            <br />
-          </>
-        )}
-        {format(currentSlot.startTime, "h:mm aa")} &ndash;{" "}
-        {format(currentSlot.endTime, "h:mm aa")}
+      <Text fontSize="lg" mt="0.5" color={isSelected ? "#fff" : QUIET}>
+        {format(day.date, "MMMM d")}, {open === 0 ? "full" : `${open} open`}
       </Text>
     </Box>
   );
 }
 
-function ConfirmSlotDialog({
-  isOpen,
-  setIsOpen,
+function SlotButton({
   slot,
-  setSlot,
-  reloadSignUpInfo,
+  showLocation,
+  isChosen,
+  onSelect,
 }: {
-  isOpen: boolean;
-  setIsOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  slot: Slot | undefined;
-  setSlot: React.Dispatch<React.SetStateAction<Slot | undefined>>;
-  reloadSignUpInfo: () => Promise<void>;
+  slot: Slot;
+  showLocation: boolean;
+  isChosen: boolean;
+  onSelect: (slot: Slot) => void;
 }) {
-  const navigate = useNavigate();
-  const { watch } = useFormContext();
-
-  const cancelRef = useRef<HTMLButtonElement>(null);
-
-  const formValues: { [k: string]: string } = watch();
-
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-
-  const onClose = useCallback(() => {
-    // Clear slot on cancel
-    setSlot(undefined);
-    setError(undefined);
-    setIsOpen(false);
-  }, [setSlot, setIsOpen]);
-
-  const handleConfirm = useCallback(async () => {
-    // Slot must exist for this to work
-    if (!slot) return;
-
-    const { firstName, lastName, pronouns, classYear, dormRoom, email, phone } =
-      formValues;
-
-    // Show loading state
-    setIsLoading(true);
-    setError(undefined);
-
-    try {
-      // Attempt signup
-      const data = await reserveSlot(slot.id.toString(), {
-        firstName,
-        lastName,
-        pronouns,
-        classYear,
-        dormRoom,
-        email,
-        phone,
-      });
-
-      if (data.data === "success") {
-        // Success => Thanks
-        navigate("../thanks");
-        return;
-      }
-
-      setError(data.error ?? "Something went wrong. Please try another slot.");
-      // Someone may have taken the slot while this person was deciding, so
-      // pull fresh availability before they pick again.
-      await reloadSignUpInfo();
-    } catch (e) {
-      console.error(e);
-      setError(
-        e instanceof Error ? e.message : "Something went wrong. Please retry."
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, [formValues, navigate, reloadSignUpInfo, slot]);
-
   return (
-    <AlertDialog
-      isOpen={isOpen}
-      leastDestructiveRef={cancelRef}
-      onClose={onClose}
-      isCentered
+    <Box
+      as="button"
+      type="button"
+      onClick={() => onSelect(slot)}
+      aria-label={`${format(slot.startTime, "h:mm aa")} to ${format(
+        slot.endTime,
+        "h:mm aa"
+      )}`}
+      minW="140px"
+      minH="64px"
+      px="5"
+      py="2"
+      borderRadius="lg"
+      border="2px solid"
+      borderColor={isChosen ? "#fff" : HAIRLINE}
+      backgroundColor={isChosen ? "#fff" : "#ffffff12"}
+      color={isChosen ? "#000" : "#fff"}
+      outline="none"
+      transitionProperty="var(--chakra-transition-property-common)"
+      transitionDuration="var(--chakra-transition-duration-fast)"
+      _hover={{ backgroundColor: "#fff", borderColor: "#fff", color: "#000" }}
+      _active={{ transform: "scale(0.97)" }}
+      _focusVisible={{ boxShadow: "0 0 0 3px var(--chakra-colors-red-500)" }}
     >
-      <AlertDialogOverlay>
-        <AlertDialogContent backgroundColor="#252525">
-          <AlertDialogHeader
-            fontSize="2xl"
-            fontWeight="bold"
-            fontFamily="heading"
-          >
-            Confirm Slot
-          </AlertDialogHeader>
-
-          <AlertDialogBody>
-            {slot && (
-              <Box mb="4">
-                <Text fontSize="lg" mb="4" fontWeight="500">
-                  Please confirm the details below:
-                </Text>
-                <Flex fontSize="md" direction="column" gap="0.5" mb="4">
-                  <ConfirmRow mdIcon={MdEmail}>{formValues.email}</ConfirmRow>
-                  <ConfirmRow mdIcon={MdCalendarMonth}>
-                    {format(slot.startTime, "EEEE, MMMM d, yyyy")}
-                  </ConfirmRow>
-                  <ConfirmRow mdIcon={MdTimer}>
-                    {format(slot.startTime, "h:mm aa")} &ndash;{" "}
-                    {format(slot.endTime, "h:mm aa")}
-                  </ConfirmRow>
-                  <ConfirmRow mdIcon={MdLocationPin}>
-                    {slot.location}
-                  </ConfirmRow>
-                </Flex>
-                <Text fontSize="medium">
-                  Once confirmed, you will receive a copy of this information in
-                  the email you provided.
-                </Text>
-                {error && (
-                  <Text mt="4" fontSize="medium" fontWeight="600" color="red.300">
-                    {error}
-                  </Text>
-                )}
-              </Box>
-            )}
-          </AlertDialogBody>
-
-          <AlertDialogFooter>
-            <Button onClick={onClose} ref={cancelRef} isDisabled={isLoading}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme="green"
-              onClick={handleConfirm}
-              ml={3}
-              isLoading={isLoading}
-            >
-              Confirm
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialogOverlay>
-    </AlertDialog>
-  );
-}
-
-function ConfirmRow({
-  mdIcon,
-  children,
-}: {
-  mdIcon: IconType;
-  children: React.ReactNode;
-}) {
-  return (
-    <Flex direction="row" gap="2" alignItems="center">
-      <Icon as={mdIcon} />
-      <Text flex={1}>{children}</Text>
-    </Flex>
+      <Text as="span" display="block" fontSize="22px" fontWeight="700">
+        {format(slot.startTime, "h:mm")}
+        <Text as="span" fontSize="md" fontWeight="500" ml="1.5">
+          {format(slot.startTime, "aa")}
+        </Text>
+      </Text>
+      {/* Not every slot has a location set on the sheet. */}
+      {showLocation && slot.location && (
+        <Text as="span" display="block" fontSize="sm" fontWeight="500">
+          {slot.location}
+        </Text>
+      )}
+    </Box>
   );
 }
 
@@ -519,17 +465,19 @@ function FullPageMessage({
   return (
     <Flex
       flex={1}
+      minH="60vh"
       alignItems="center"
       justifyContent="center"
       textAlign="center"
       direction="column"
-      gap="6"
+      gap="5"
+      px="8"
     >
       <Heading as="h1" size="2xl">
         {title}
       </Heading>
       {description && (
-        <Text fontSize="xl">
+        <Text fontSize="xl" color={QUIET}>
           {description.split("\n").map((line, index) => (
             <Fragment key={index + "_" + line}>
               {line}
@@ -555,8 +503,8 @@ function Loading() {
       gap="5"
     >
       <Spinner size="xl" />
-      <Text fontSize="lg" fontWeight="500">
-        Loading slots&hellip;
+      <Text fontSize="xl" fontWeight="500">
+        Loading audition times&hellip;
       </Text>
     </Flex>
   );
