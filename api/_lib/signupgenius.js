@@ -55,6 +55,56 @@ async function getSignUpInfo(urlid) {
   return info;
 }
 
+/**
+ * Who is currently signed up for one slot item.
+ *
+ * This is a targeted query and is authoritative: the `qtyTaken` field on
+ * getSignUpInfo lags behind fresh sign-ups by anywhere from seconds to a
+ * minute, which is how two people end up on the same slot.
+ *
+ * Note this returns real names even on sheets with `shownames: false`, so the
+ * result must not be forwarded to the browser.
+ */
+async function getSlotParticipants(urlid, listid, slotitemid) {
+  const response = await sugApi("s.getSignUpParticipantsBySlotItem", {
+    urlid,
+    listid,
+    slotitemid,
+    offset: 1,
+    limitTo: 100,
+    search: "",
+    orderBy: "",
+  });
+
+  if (response?.SUCCESS === false) {
+    throw new Error(sugMessage(response) || "Could not check slot availability");
+  }
+
+  return response?.DATA?.participants ?? [];
+}
+
+/**
+ * Remove a sign-up. Used only to undo one we just created ourselves after
+ * losing a race for the slot — never to clear anyone else's.
+ */
+async function deleteItemMember(urlid, listid, itemmemberid) {
+  const response = await sugApi("s.deleteItemMember", {
+    urlid,
+    listid,
+    itemmemberid,
+  });
+
+  // This reports success even for ids that don't exist, so the caller has to
+  // read the slot back to know whether anything actually changed.
+  return response?.SUCCESS !== false;
+}
+
+/** How many people a slot item holds. Effectively always 1 for auditions. */
+function slotCapacity(item) {
+  const qty = Number(item?.qty);
+  return Number.isFinite(qty) && qty > 0 ? qty : 1;
+}
+
 /** Pull the human-readable error out of a SignUpGenius response. */
 function sugMessage(response) {
   const message = response?.MESSAGE;
@@ -117,4 +167,12 @@ function zoneOffset(instant, timeZone) {
   return local - instant;
 }
 
-module.exports = { sugApi, getSignUpInfo, sugMessage, parseSugTime };
+module.exports = {
+  sugApi,
+  getSignUpInfo,
+  getSlotParticipants,
+  deleteItemMember,
+  slotCapacity,
+  sugMessage,
+  parseSugTime,
+};

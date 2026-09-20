@@ -1,11 +1,30 @@
 const {
   sugApi,
   getSignUpInfo,
+  getSlotParticipants,
+  deleteItemMember,
+  slotCapacity,
   sugMessage,
   parseSugTime,
 } = require("../../../_lib/signupgenius");
 
 // Fields the kiosk questionnaire collects. All are required by the sheet.
+const SLOT_TAKEN = "Someone just took that slot. Please pick another.";
+
+// We raced, lost, and successfully undid our own sign-up.
+const SLOT_RACE_LOST =
+  "Someone signed up for that slot at the same moment you did, so you have " +
+  "not been signed up. Please pick another time.";
+
+// We raced, lost, and could not undo it — so we must not claim otherwise.
+const SLOT_RACE_STUCK =
+  "Someone signed up for that slot at the same moment you did. Please pick " +
+  "another time, and let a Fleet Street member know.";
+
+// Only ever undo a sign-up made in the last few minutes: a safety belt so a
+// name collision with someone who signed up yesterday can't delete them.
+const ROLLBACK_WINDOW_MS = 5 * 60 * 1000;
+
 const REQUIRED_FIELDS = [
   "firstName",
   "lastName",
@@ -67,8 +86,17 @@ async function handleReserve(req, res) {
     if (!item) {
       return fail(res, 409, "That slot has no audition available.");
     }
-    if (item.qtyTaken) {
-      return fail(res, 409, "Someone just took that slot. Please pick another.");
+    const capacity = slotCapacity(item);
+
+    // `qtyTaken` comes off the sheet-wide read and lags fresh sign-ups, so it
+    // only catches the easy cases. The per-slot lookup below is authoritative.
+    if (Number(item.qtyTaken || 0) >= capacity) {
+      return fail(res, 409, SLOT_TAKEN);
+    }
+
+    const before = await getSlotParticipants(urlid, data.id, item.slotitemid);
+    if (before.length >= capacity) {
+      return fail(res, 409, SLOT_TAKEN);
     }
 
     const customFields = buildCustomFields(data.customfields, user);
@@ -87,13 +115,52 @@ async function handleReserve(req, res) {
       return fail(res, 400, sugMessage(response) || "Sign-up was rejected");
     }
 
-    // The availability we checked above comes from SignUpGenius' read endpoint,
-    // which can lag a minute or so behind a fresh sign-up — so two people can
-    // race onto the same slot and both be told it worked. Log the raw response
-    // so a disputed slot can be untangled from the function logs afterwards.
+    // SignUpGenius does not enforce slot capacity on this path — it will
+    // happily put a second person on a slot that holds one. The window is now
+    // only as wide as the request above, but it is not zero, so read the slot
+    // back and make sure we actually won it.
+    const after = await getSlotParticipants(urlid, data.id, item.slotitemid);
+
+    if (after.length > capacity) {
+      const ours = findOurSignUp(after, user);
+      const winners = [...after].sort(bySignUpOrder).slice(0, capacity);
+      const weLost =
+        ours && !winners.some((w) => w.itemmemberid === ours.itemmemberid);
+
+      if (weLost) {
+        const rolledBack = await rollBack(
+          urlid,
+          data.id,
+          item.slotitemid,
+          ours
+        );
+
+        console.error(
+          "lost slot race",
+          JSON.stringify({
+            slotId,
+            email: user.email,
+            itemmemberid: ours.itemmemberid,
+            onSlot: after.length,
+            capacity,
+            rolledBack,
+          })
+        );
+
+        return fail(res, 409, rolledBack ? SLOT_RACE_LOST : SLOT_RACE_STUCK);
+      }
+
+      // We hold the slot but someone else landed on it too. Nothing to do from
+      // here, so make sure it's visible to whoever reads the logs.
+      console.error(
+        "slot double-booked",
+        JSON.stringify({ slotId, onSlot: after.length, capacity })
+      );
+    }
+
     console.log(
       "reserved",
-      JSON.stringify({ slotId, email: user.email, response })
+      JSON.stringify({ slotId, email: user.email, onSlot: after.length })
     );
 
     return res.status(200).json({ data: "success" });
@@ -240,6 +307,52 @@ function buildSignUpPayload({ urlid, data, slot, item, user, customFields }) {
     customFields,
     payLater: false,
   };
+}
+
+/**
+ * Undo the sign-up we just made, and confirm it's actually gone — SignUpGenius
+ * reports success on a delete whether or not anything was removed.
+ */
+async function rollBack(urlid, listid, slotitemid, ours) {
+  const createdAt = Date.parse(ours.datecreated);
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt > ROLLBACK_WINDOW_MS) {
+    // Not demonstrably the entry we just wrote — leave it alone.
+    return false;
+  }
+
+  try {
+    await deleteItemMember(urlid, listid, ours.itemmemberid);
+    const remaining = await getSlotParticipants(urlid, listid, slotitemid);
+    return !remaining.some((p) => p.itemmemberid === ours.itemmemberid);
+  } catch (e) {
+    console.error("rollback failed", e);
+    return false;
+  }
+}
+
+/**
+ * Find the entry we just created. Matched on the name we submitted, taking the
+ * most recent if someone with the same name is already on the slot.
+ */
+function findOurSignUp(participants, user) {
+  const matches = participants.filter(
+    (p) =>
+      String(p.firstname || "").trim().toLowerCase() ===
+        user.firstName.toLowerCase() &&
+      String(p.lastname || "").trim().toLowerCase() ===
+        user.lastName.toLowerCase()
+  );
+
+  return matches.sort(bySignUpOrder).pop();
+}
+
+/** Oldest sign-up first. */
+function bySignUpOrder(a, b) {
+  const at = Date.parse(a.datecreated);
+  const bt = Date.parse(b.datecreated);
+  if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt;
+  // itemmemberid is an increasing key, so it breaks ties within the same second.
+  return Number(a.itemmemberid) - Number(b.itemmemberid);
 }
 
 function fail(res, status, error) {
