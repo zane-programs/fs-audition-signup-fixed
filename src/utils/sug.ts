@@ -33,6 +33,14 @@ export interface SUGSlot {
 export interface SUGSignUpInfo {
   DATA: {
     slots: { [slotId: string]: SUGSlot };
+    header: {
+      title: string;
+      /**
+       * The organizer's blurb, as HTML from SignUpGenius' rich-text editor.
+       * Rendered through <RichText>, never injected as markup.
+       */
+      description: string;
+    };
     slotMetadata: {
       calendarView: {
         firstMonthWithSlots: string;

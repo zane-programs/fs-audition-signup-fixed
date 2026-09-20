@@ -44,6 +44,7 @@ import {
 } from "react-icons/md";
 import { useFormContext } from "react-hook-form";
 import BowtieIcon from "../../components/BowtieIcon";
+import RichText from "../../components/RichText";
 import { useNavigate } from "react-router";
 
 export interface Slot {
@@ -177,12 +178,17 @@ function SignUpView({
       <Flex style={{ height }} className="fadeOnce">
         <Flex
           direction="column"
-          justifyContent="center"
           h="100%"
+          w="400px"
+          flexShrink={0}
           background="#fff2"
-          p="8"
+          px="8"
+          pt="28"
+          pb="8"
           gap="4"
           position="relative"
+          overflowY="auto"
+          className="scrollbarVisible"
         >
           <BowtieIcon />
           <Heading fontSize="x-large" textAlign="center">
@@ -231,6 +237,14 @@ function SignUpView({
               },
             }}
           />
+          {signUpInfo.DATA.header?.description && (
+            <Flex direction="column" gap="3" mt="2" pt="6" borderTop="1px solid #fff3">
+              <Heading fontSize="lg" textAlign="center">
+                What to Expect
+              </Heading>
+              <RichText html={signUpInfo.DATA.header.description} />
+            </Flex>
+          )}
         </Flex>
         {date ? (
           slotsForDate.length > 0 ? (
@@ -325,8 +339,13 @@ function SlotButton({
         {format(currentSlot.startTime, "h:mm aa")}
       </Heading>
       <Text fontSize="md" color="#fffb">
-        {currentSlot.location}
-        <br />
+        {/* Not every slot has a location set on the sheet. */}
+        {currentSlot.location && (
+          <>
+            {currentSlot.location}
+            <br />
+          </>
+        )}
         {format(currentSlot.startTime, "h:mm aa")} &ndash;{" "}
         {format(currentSlot.endTime, "h:mm aa")}
       </Text>

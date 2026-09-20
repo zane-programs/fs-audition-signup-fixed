@@ -5,6 +5,5 @@
   "outputDirectory": "build",
   "functions": {
     "api/**/*.js": { "maxDuration": 20 }
-  },
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
+  }
 }
